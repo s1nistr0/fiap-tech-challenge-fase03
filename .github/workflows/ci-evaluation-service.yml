@@ -10,6 +10,9 @@ on:
   pull_request:
     paths:
       - 'services/evaluation-service/**'
+  # permite disparar na mao, sem precisar de commit falso.
+  # usado depois de recriar o ambiente, pra repopular o ecr.
+  workflow_dispatch:
 
 env:
   SERVICO: evaluation-service
