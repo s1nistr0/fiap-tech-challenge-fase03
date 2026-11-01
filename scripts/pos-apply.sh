@@ -93,7 +93,7 @@ echo "==> 6/7 applications do argocd"
 kubectl apply -f gitops/argocd/applications.yaml
 echo "    esperando os pods subirem..."
 for i in $(seq 1 40); do
-  P=$(kubectl get pods -n auth --no-headers 2>/dev/null | grep -c "1/1" || echo 0)
+  P=$(kubectl get pods -n auth --no-headers 2>/dev/null | grep -c "1/1" || true)
   [ "$P" -gt 0 ] && break
   sleep 10
 done
