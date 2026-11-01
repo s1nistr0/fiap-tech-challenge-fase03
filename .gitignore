@@ -2,7 +2,11 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+# arquivo de plano do terraform: tem o estado inteiro embutido,
+# com a senha do rds em texto puro. nunca commitar.
 plano
+plano-*
+*.tfplan
 .DS_Store
 __pycache__/
 *.pyc

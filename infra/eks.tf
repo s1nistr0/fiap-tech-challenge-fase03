@@ -17,6 +17,23 @@ module "eks" {
     kube-proxy             = {}
     vpc-cni                = {}
     eks-pod-identity-agent = {}
+    # o eks nao traz metrics-server de fabrica, diferente de minikube.
+    # sem ele o hpa le "cpu: <unknown>" e nunca escala.
+    metrics-server = {}
+  }
+
+  # o control plane precisa alcancar o metrics-server dentro do no, na
+  # 10251. o modulo abre 443, 10250 e 53, mas nao essa - e sem ela o
+  # apiservice de metricas fica em FailedDiscoveryCheck e o hpa nunca le cpu.
+  node_security_group_additional_rules = {
+    metrics_server = {
+      description                   = "control plane alcanca o metrics-server"
+      protocol                      = "tcp"
+      from_port                     = 10251
+      to_port                       = 10251
+      type                          = "ingress"
+      source_cluster_security_group = true
+    }
   }
 
   eks_managed_node_groups = {
