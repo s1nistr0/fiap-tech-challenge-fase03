@@ -10,9 +10,12 @@ titulo() { printf '\n== %s\n' "$1"; }
 
 reporta() {
   # $1 descricao, $2 saida do comando
-  if [ -n "$2" ]; then
+  # a aws cli imprime "None" quando a chave consultada vem nula: nao e recurso.
+  local S
+  S=$(printf '%s' "$2" | grep -v '^None$' | sed '/^[[:space:]]*$/d')
+  if [ -n "$S" ]; then
     printf '   SOBROU:\n'
-    printf '%s\n' "$2" | sed 's/^/     /'
+    printf '%s\n' "$S" | sed 's/^/     /'
     ACHOU=1
   else
     printf '   limpo\n'
