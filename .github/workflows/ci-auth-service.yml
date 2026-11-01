@@ -36,7 +36,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          # 1.27 e nao 1.21: a stdlib do 1.21 tem CVE-2025-68121 critica
+          # em crypto/tls, e a stdlib vai embutida no binario. o scan da
+          # imagem pegou isso. aqui acompanha o Dockerfile.
+          go-version: '1.27'
           cache-dependency-path: services/auth-service/go.sum
 
       - run: go build ./...
@@ -55,6 +58,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
+          # fica no 1.21 de proposito: o golangci-lint v1.64.8 nao le
+          # metadado de pacote gerado por go novo. lint nao gera binario,
+          # entao a versao aqui nao afeta o que vai pro registro.
           go-version: '1.21'
           cache-dependency-path: services/auth-service/go.sum
 
