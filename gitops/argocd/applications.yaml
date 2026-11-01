@@ -1,0 +1,159 @@
+# Os 5 Applications do argocd. Cada um amarra uma pasta do repositorio a
+# um namespace do cluster.
+#
+# Este arquivo e o unico kubectl apply que sobra no projeto, e e aplicado
+# uma vez so. E o bootstrap do gitops: alguem precisa dizer ao argocd
+# onde olhar. Dai pra frente nenhum deploy passa por kubectl.
+#
+# Os namespaces sao criados antes, fora daqui, porque os Secrets
+# precisam deles existindo - e Secret nao mora no git (repo publico).
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auth-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/s1nistr0/fiap-tech-challenge-fase03.git
+    targetRevision: main
+    path: gitops/auth-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auth
+  syncPolicy:
+    automated:
+      # prune: objeto removido do git e removido do cluster.
+      # sem isso o git vira so "o que adicionar", nunca "o que remover".
+      prune: true
+      # selfHeal: mudanca feita na mao com kubectl e desfeita.
+      # e o que torna o git a fonte da verdade de verdade.
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flag-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/s1nistr0/fiap-tech-challenge-fase03.git
+    targetRevision: main
+    path: gitops/flag-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: flags
+  syncPolicy:
+    automated:
+      # prune: objeto removido do git e removido do cluster.
+      # sem isso o git vira so "o que adicionar", nunca "o que remover".
+      prune: true
+      # selfHeal: mudanca feita na mao com kubectl e desfeita.
+      # e o que torna o git a fonte da verdade de verdade.
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: targeting-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/s1nistr0/fiap-tech-challenge-fase03.git
+    targetRevision: main
+    path: gitops/targeting-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: targeting
+  syncPolicy:
+    automated:
+      # prune: objeto removido do git e removido do cluster.
+      # sem isso o git vira so "o que adicionar", nunca "o que remover".
+      prune: true
+      # selfHeal: mudanca feita na mao com kubectl e desfeita.
+      # e o que torna o git a fonte da verdade de verdade.
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: evaluation-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/s1nistr0/fiap-tech-challenge-fase03.git
+    targetRevision: main
+    path: gitops/evaluation-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: evaluation
+  syncPolicy:
+    automated:
+      # prune: objeto removido do git e removido do cluster.
+      # sem isso o git vira so "o que adicionar", nunca "o que remover".
+      prune: true
+      # selfHeal: mudanca feita na mao com kubectl e desfeita.
+      # e o que torna o git a fonte da verdade de verdade.
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: analytics-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/s1nistr0/fiap-tech-challenge-fase03.git
+    targetRevision: main
+    path: gitops/analytics-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: analytics
+  syncPolicy:
+    automated:
+      # prune: objeto removido do git e removido do cluster.
+      # sem isso o git vira so "o que adicionar", nunca "o que remover".
+      prune: true
+      # selfHeal: mudanca feita na mao com kubectl e desfeita.
+      # e o que torna o git a fonte da verdade de verdade.
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
