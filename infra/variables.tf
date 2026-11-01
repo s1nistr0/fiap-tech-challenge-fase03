@@ -10,7 +10,7 @@ variable "nome" {
 
 variable "versao_kubernetes" {
   type    = string
-  default = "1.33"
+  default = "1.34"
 }
 
 variable "cidr_vpc" {
@@ -26,9 +26,9 @@ variable "azs" {
 variable "bancos" {
   type = map(string)
   default = {
-    auth      = "authdb"
-    flag      = "flagdb"
-    targeting = "targetingdb"
+    auth      = "auth_db"
+    flags     = "flags_db"
+    targeting = "targeting_db"
   }
 }
 
