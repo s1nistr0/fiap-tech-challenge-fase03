@@ -1,57 +1,78 @@
 #!/usr/bin/env bash
-# Gera os Secrets do Kubernetes com os endpoints reais.
+# Gera os Secrets do kubernetes a partir do que ja existe na aws.
 #
-# Os endpoints ele busca sozinho na AWS - digitar endpoint na mao e pedir pra errar,
-# e endpoint errado nao da erro de sintaxe, o pod so sobe e falha na conexao.
+# Nada e digitado na mao. Endpoint errado nao da erro de sintaxe: o pod
+# sobe e falha na conexao, e voce perde meia hora achando que e outra
+# coisa. Entao tudo vem de consulta.
 #
-# As senhas vem de .aws-app-creds.env na raiz do projeto (fora do git):
-#   APP_AWS_ACCESS_KEY_ID       chave do usuario IAM togglemaster-app
-#   APP_AWS_SECRET_ACCESS_KEY
-#   RDS_PASSWORD                senha do usuario toggle nos 3 RDS
-#   MASTER_KEY                  senha de admin do auth-service
-#   SERVICE_API_KEY             so existe depois do auth-service estar no ar
+# Mudou da fase 2:
+#   - a senha do rds vem do secrets manager, nao de um .env local
+#   - AWS_ACCESS_KEY_ID e AWS_SECRET_ACCESS_KEY SUMIRAM. quem autentica
+#     agora e o irsa, pela service account do pod.
 #
-# Uso: ./k8s/gerar-secrets.sh | kubectl apply -f -
+# Esses secrets NAO vao pro git de proposito - o repositorio e publico.
+# Por isso tambem nao estao nos manifestos do gitops/: se estivessem,
+# o argocd com selfHeal reverteria o valor real pro placeholder.
+#
+# Uso:
+#   ./scripts/gerar-secrets.sh | kubectl apply -f -
+#
+# A SERVICE_API_KEY so existe depois do auth-service estar no ar. Na
+# primeira rodada ela vai vazia; depois de gerar a chave, rode de novo:
+#   SERVICE_API_KEY=tm_key_... ./scripts/gerar-secrets.sh | kubectl apply -f -
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-CREDS=.aws-app-creds.env
-[ -f "$CREDS" ] || { echo "faltou o $CREDS" >&2; exit 1; }
-set -a; . "./$CREDS"; set +a
-
-for v in APP_AWS_ACCESS_KEY_ID APP_AWS_SECRET_ACCESS_KEY RDS_PASSWORD; do
-  [ -n "${!v:-}" ] || { echo "faltou $v no $CREDS" >&2; exit 1; }
-done
-
-: "${MASTER_KEY:=}"
-: "${SERVICE_API_KEY:=}"
+REGIAO=${AWS_REGION:-us-east-1}
+NOME=togglemaster
 DB_USER=toggle
 
-rds() { aws rds describe-db-instances --db-instance-identifier "$1" \
-          --query 'DBInstances[0].Endpoint.Address' --output text; }
+segredo() {
+  aws secretsmanager get-secret-value --region "$REGIAO" \
+    --secret-id "$1" --query SecretString --output text
+}
 
-RDS_AUTH=$(rds togglemaster-auth)
-RDS_FLAGS=$(rds togglemaster-flags)
-RDS_TARGETING=$(rds togglemaster-targeting)
+# a senha nasceu do random_password no terraform e foi parar aqui.
+# ninguem nunca digitou ela.
+RDS_PASSWORD=$(segredo "${NOME}/rds" | python3 -c 'import json,sys; print(json.load(sys.stdin)["password"], end="")')
+MASTER_KEY=$(segredo "${NOME}/auth-master-key")
 
-REDIS=$(aws elasticache describe-replication-groups --replication-group-id togglemaster-redis \
+: "${SERVICE_API_KEY:=}"
+[ -n "$SERVICE_API_KEY" ] || echo "aviso: SERVICE_API_KEY vazia - o evaluation vai tomar 401 ate voce gerar a chave" >&2
+
+rds() {
+  aws rds describe-db-instances --region "$REGIAO" \
+    --db-instance-identifier "$1" \
+    --query 'DBInstances[0].Endpoint.Address' --output text
+}
+
+RDS_AUTH=$(rds ${NOME}-auth)
+RDS_FLAGS=$(rds ${NOME}-flags)
+RDS_TARGETING=$(rds ${NOME}-targeting)
+
+REDIS=$(aws elasticache describe-replication-groups --region "$REGIAO" \
+          --replication-group-id ${NOME}-redis \
           --query 'ReplicationGroups[0].NodeGroups[0].PrimaryEndpoint.Address' --output text)
-# o cluster subiu com criptografia em transito exigida, entao e rediss:// e nao redis://.
-# o go-redis liga o TLS sozinho quando ve esse esquema na URL.
-TLS=$(aws elasticache describe-replication-groups --replication-group-id togglemaster-redis \
+
+# o cluster subiu com criptografia em transito, entao e rediss:// e nao
+# redis://. o go-redis liga o tls sozinho ao ver esse esquema na url.
+# consultado em vez de chumbado: se mudar no terraform, isso acompanha.
+TLS=$(aws elasticache describe-replication-groups --region "$REGIAO" \
+        --replication-group-id ${NOME}-redis \
         --query 'ReplicationGroups[0].TransitEncryptionEnabled' --output text)
 [ "$TLS" = "True" ] && SCHEME=rediss || SCHEME=redis
 
-SQS_URL=$(aws sqs get-queue-url --queue-name togglemaster-events --query QueueUrl --output text)
+SQS_URL=$(aws sqs get-queue-url --region "$REGIAO" --queue-name ${NOME}-events --query QueueUrl --output text)
 
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
-# senha vai dentro de uma URL, entao precisa de percent-encoding.
-# aprendi na marra: senha com # cortava a string no parser do pgx e o auth nao subia.
+# a senha vai dentro de uma url de conexao, entao precisa de
+# percent-encoding. aprendi na marra na fase 2: senha com # cortava a
+# string no parser do pgx e o auth nao subia. hoje a senha vem sem
+# caractere especial do terraform, mas a protecao fica.
 urlenc() { printf '%s' "$1" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=""), end="")'; }
 PW=$(urlenc "$RDS_PASSWORD")
 
-cat <<EOF
+cat <<YAML
 apiVersion: v1
 kind: Secret
 metadata:
@@ -59,8 +80,8 @@ metadata:
   namespace: auth
 type: Opaque
 data:
-  DATABASE_URL: $(b64 "postgres://${DB_USER}:${PW}@${RDS_AUTH}:5432/auth_db?sslmode=require")
-  MASTER_KEY: $(b64 "$MASTER_KEY")
+  DATABASE_URL: "$(b64 "postgres://${DB_USER}:${PW}@${RDS_AUTH}:5432/auth_db?sslmode=require")"
+  MASTER_KEY: "$(b64 "$MASTER_KEY")"
 ---
 apiVersion: v1
 kind: Secret
@@ -69,7 +90,7 @@ metadata:
   namespace: flags
 type: Opaque
 data:
-  DATABASE_URL: $(b64 "postgres://${DB_USER}:${PW}@${RDS_FLAGS}:5432/flags_db?sslmode=require")
+  DATABASE_URL: "$(b64 "postgres://${DB_USER}:${PW}@${RDS_FLAGS}:5432/flags_db?sslmode=require")"
 ---
 apiVersion: v1
 kind: Secret
@@ -78,7 +99,7 @@ metadata:
   namespace: targeting
 type: Opaque
 data:
-  DATABASE_URL: $(b64 "postgres://${DB_USER}:${PW}@${RDS_TARGETING}:5432/targeting_db?sslmode=require")
+  DATABASE_URL: "$(b64 "postgres://${DB_USER}:${PW}@${RDS_TARGETING}:5432/targeting_db?sslmode=require")"
 ---
 apiVersion: v1
 kind: Secret
@@ -87,11 +108,9 @@ metadata:
   namespace: evaluation
 type: Opaque
 data:
-  REDIS_URL: $(b64 "${SCHEME}://${REDIS}:6379")
-  SERVICE_API_KEY: $(b64 "$SERVICE_API_KEY")
-  AWS_SQS_URL: $(b64 "$SQS_URL")
-  AWS_ACCESS_KEY_ID: $(b64 "$APP_AWS_ACCESS_KEY_ID")
-  AWS_SECRET_ACCESS_KEY: $(b64 "$APP_AWS_SECRET_ACCESS_KEY")
+  REDIS_URL: "$(b64 "${SCHEME}://${REDIS}:6379")"
+  SERVICE_API_KEY: "$(b64 "$SERVICE_API_KEY")"
+  AWS_SQS_URL: "$(b64 "$SQS_URL")"
 ---
 apiVersion: v1
 kind: Secret
@@ -100,7 +119,5 @@ metadata:
   namespace: analytics
 type: Opaque
 data:
-  AWS_SQS_URL: $(b64 "$SQS_URL")
-  AWS_ACCESS_KEY_ID: $(b64 "$APP_AWS_ACCESS_KEY_ID")
-  AWS_SECRET_ACCESS_KEY: $(b64 "$APP_AWS_SECRET_ACCESS_KEY")
-EOF
+  AWS_SQS_URL: "$(b64 "$SQS_URL")"
+YAML
