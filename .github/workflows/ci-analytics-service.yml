@@ -16,10 +16,11 @@ env:
   AWS_REGION: us-east-1
   ECR_REPO: togglemaster/analytics-service
 
-# contents: write porque o job gitops faz commit de volta no repo.
-# sem isso o git push responde 403.
+# leitura por padrao. escrita e concedida SO no job gitops, que e o
+# unico que commita. se um passo do build for comprometido por uma
+# dependencia maliciosa, ele nao consegue escrever no repositorio.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # ---------------------------------------------------------------
@@ -78,7 +79,7 @@ jobs:
 
       # SCA - Software Composition Analysis: vulnerabilidade de terceiros
       - name: trivy filesystem (SCA)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: services/analytics-service
@@ -124,7 +125,7 @@ jobs:
       # scan da imagem montada, nao so do codigo. pega cve do sistema
       # operacional base que o scan de filesystem nao ve.
       - name: trivy image (container scan)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ env.SERVICO }}:${{ steps.meta.outputs.tag }}
           severity: CRITICAL
@@ -154,6 +155,9 @@ jobs:
   gitops:
     runs-on: ubuntu-latest
     needs: imagem
+    # a unica escrita no repositorio do pipeline inteiro
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
