@@ -1,0 +1,198 @@
+name: ci-auth-service
+
+on:
+  push:
+    branches: [main]
+    # paths evita que mexer no flag-service dispare os 5 pipelines
+    paths:
+      - 'services/auth-service/**'
+      - '.github/workflows/ci-auth-service.yml'
+  pull_request:
+    paths:
+      - 'services/auth-service/**'
+
+env:
+  SERVICO: auth-service
+  AWS_REGION: us-east-1
+  ECR_REPO: togglemaster/auth-service
+
+# contents: write porque o job gitops faz commit de volta no repo.
+# sem isso o git push responde 403.
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------
+  # 1. build e teste unitario
+  # ---------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/auth-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: services/auth-service/go.sum
+
+      - run: go build ./...
+
+      # nao tem teste no codigo base. go test num pacote sem _test.go sai 0,
+      # entao isso passa limpo e vira cobranca real no dia que tiver teste.
+      - run: go test ./...
+
+  # ---------------------------------------------------------------
+  # 2. lint / analise estatica de qualidade
+  # ---------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: services/auth-service/go.sum
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: services/auth-service
+          args: --timeout=5m
+
+  # ---------------------------------------------------------------
+  # 3. o portao: SCA nas dependencias + SAST no codigo
+  #
+  # needs: build e lint -> so roda se os dois passarem.
+  # e os jobs imagem e gitops dependem deste. vulnerabilidade critica
+  # aqui nao "falha depois": os proximos jobs nem sao agendados.
+  # ---------------------------------------------------------------
+  seguranca:
+    runs-on: ubuntu-latest
+    needs: [build, lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      # SCA - Software Composition Analysis: vulnerabilidade de terceiros
+      - name: trivy filesystem (SCA)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: services/auth-service
+          scanners: vuln
+          severity: CRITICAL
+          exit-code: '1'
+          # descarta cve sem correcao publicada. portao que nao pode ser
+          # atendido e portao que alguem desliga na primeira sexta-feira.
+          ignore-unfixed: true
+
+      # SAST - Static Application Security Testing: vulnerabilidade no
+      # codigo que nos escrevemos (sql concatenado, cripto fraca, etc)
+      #
+      # gosec instalado na mao em vez da action: a action roda da raiz do
+      # repo, e nao tem go.mod na raiz - e monorepo. assim o gosec roda
+      # dentro do modulo e acha os pacotes.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: services/auth-service/go.sum
+
+      - name: gosec (SAST)
+        working-directory: services/auth-service
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
+          gosec -severity high ./...
+
+  # ---------------------------------------------------------------
+  # 4. imagem: build, scan da imagem pronta, push pro ecr
+  # ---------------------------------------------------------------
+  imagem:
+    runs-on: ubuntu-latest
+    needs: seguranca
+    # pull request nao empurra imagem. so push na main.
+    if: github.event_name == 'push'
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # tag com o hash do commit: rastreia imagem -> commit exato
+      - id: meta
+        run: echo "tag=v1.0.0-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: build da imagem
+        run: docker build -t ${{ env.SERVICO }}:${{ steps.meta.outputs.tag }} services/auth-service
+
+      # scan da imagem montada, nao so do codigo. pega cve do sistema
+      # operacional base que o scan de filesystem nao ve.
+      - name: trivy image (container scan)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.SERVICO }}:${{ steps.meta.outputs.tag }}
+          severity: CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: push pro ecr
+        run: |
+          IMG=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.tag }}
+          docker tag ${{ env.SERVICO }}:${{ steps.meta.outputs.tag }} $IMG
+          docker push $IMG
+
+  # ---------------------------------------------------------------
+  # 5. gitops: atualiza a tag no manifesto e commita
+  #
+  # o ci nao faz deploy. ele mexe no git, e o argocd reconcilia.
+  # ---------------------------------------------------------------
+  gitops:
+    runs-on: ubuntu-latest
+    needs: imagem
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ref explicito: sem isso o checkout pega o sha do evento e o
+          # push falha com "non-fast-forward" se algo entrou na main
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: atualiza a tag no manifesto
+        run: |
+          ARQ=gitops/auth-service/app.yaml
+          TAG=${{ needs.imagem.outputs.tag }}
+
+          sed -i -E "s|(image: .*/${{ env.ECR_REPO }}:).*|\1${TAG}|" $ARQ
+
+          # sed que nao casa nao da erro, so nao faz nada. conferir e
+          # obrigatorio, senao o pipeline fica verde sem fazer deploy.
+          grep -q "${{ env.ECR_REPO }}:${TAG}" $ARQ || {
+            echo "::error::sed nao atualizou a tag em $ARQ"
+            exit 1
+          }
+
+          git config user.name "ci"
+          git config user.email "ci@togglemaster.local"
+          git add $ARQ
+          # [skip ci] evita o commit do pipeline disparar o proprio pipeline
+          git commit -m "deploy ${{ env.SERVICO }} ${TAG} [skip ci]" || exit 0
+
+          # os 5 pipelines podem terminar juntos e empurrar na main ao
+          # mesmo tempo. sem rebase o segundo em diante morre com
+          # non-fast-forward. tenta 3 vezes antes de desistir.
+          for tentativa in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            echo "push falhou, tentativa $tentativa"
+            sleep 5
+          done
+          echo "::error::nao consegui empurrar o commit de deploy"
+          exit 1
