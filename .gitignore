@@ -10,3 +10,6 @@ plano-*
 .DS_Store
 __pycache__/
 *.pyc
+
+# pdfs sao gerados por ./scripts/gerar-pdf.sh, nao precisam ir pro repo
+docs/*.pdf
