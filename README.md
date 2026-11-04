@@ -113,9 +113,7 @@ scripts/
 ├── pos-apply.sh            cluster utilizavel apos o terraform
 ├── gerar-secrets.sh        secrets a partir do secrets manager
 ├── teardown.sh             desmonte na ordem correta
-├── varredura-orfaos.sh     conferencia de recursos remanescentes
-└── gerar-pdf.sh            relatorio em pdf a partir do markdown
-docs/                       relatorio, custos, desafios, roteiro
+└── varredura-orfaos.sh     conferencia de recursos remanescentes
 ```
 
 ---
@@ -211,19 +209,12 @@ os dois cobram justamente quando estão ociosos.
 
 ## Custos
 
-US$ 2,40 no total. O dia seguinte ao desmonte custou zero — confirmação de que
-o teardown removeu tudo. O NAT Gateway sozinho respondeu por US$ 0,49, acima do
-control plane do EKS.
+Ciclo completo de um dia: **US$ 2,40**. O dia seguinte ao desmonte custou zero
+— confirmação de que o teardown removeu tudo.
 
-Detalhamento em [`docs/CUSTOS.md`](docs/CUSTOS.md).
+O NAT Gateway sozinho respondeu por US$ 0,49, acima do control plane do EKS.
+É o maior item isolado da conta, e cobra por hora mesmo ocioso: é o que
+justifica o ambiente ser descartável, e a decisão de usar um NAT compartilhado
+em vez de um por zona de disponibilidade.
 
----
-
-## Documentação
-
-| Documento | Conteúdo |
-|---|---|
-| [`docs/RELATORIO.md`](docs/RELATORIO.md) | Relatório da entrega |
-| [`docs/DESAFIOS-ENCONTRADOS.md`](docs/DESAFIOS-ENCONTRADOS.md) | Cada problema enfrentado, com sintoma, causa e correção |
-| [`docs/CUSTOS.md`](docs/CUSTOS.md) | Custo medido, por serviço e por tipo de uso |
-| [`docs/ROTEIRO-VIDEO.md`](docs/ROTEIRO-VIDEO.md) | Roteiro e narração do vídeo |
+Custo aproximado com o ambiente completo no ar: **US$ 0,33 por hora**.

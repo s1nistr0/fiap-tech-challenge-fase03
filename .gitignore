@@ -11,5 +11,7 @@ plano-*
 __pycache__/
 *.pyc
 
-# pdfs sao gerados por ./scripts/gerar-pdf.sh, nao precisam ir pro repo
-docs/*.pdf
+# documentacao de entrega e anotacoes de trabalho: ficam so na maquina
+CLAUDE.md
+docs/
+scripts/gerar-pdf.sh
